@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 
 from check_yolo_dataset import check_dataset, format_result, write_resolved_yaml
@@ -27,6 +28,18 @@ def default_name_from_data(data_path: str) -> str:
     if "tt100k" in stem:
         return "rtdetr_tt100k"
     return f"rtdetr_{stem}"
+
+
+def get_ultralytics_save_dir(model, fallback: Path) -> Path:
+    """Return the actual Ultralytics run directory.
+
+    Some Ultralytics versions place RT-DETR runs under runs/detect even when a
+    relative project path is supplied. Reading trainer.save_dir avoids printing
+    stale paths at the end of training.
+    """
+    trainer = getattr(model, "trainer", None)
+    save_dir = getattr(trainer, "save_dir", None)
+    return Path(save_dir) if save_dir else fallback
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,8 +103,14 @@ def main() -> int:
         exist_ok=True,
     )
 
-    best_pt = output_dir / "weights" / "best.pt"
-    last_pt = output_dir / "weights" / "last.pt"
+    save_dir = get_ultralytics_save_dir(model, output_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    if save_dir.resolve() != output_dir.resolve():
+        shutil.copy2(resolved_yaml, save_dir / "resolved_data.yaml")
+
+    best_pt = save_dir / "weights" / "best.pt"
+    last_pt = save_dir / "weights" / "last.pt"
+    print(f"Training results directory: {save_dir}")
     print(f"Training finished. best.pt: {best_pt}")
     print(f"Training finished. last.pt: {last_pt}")
     return 0

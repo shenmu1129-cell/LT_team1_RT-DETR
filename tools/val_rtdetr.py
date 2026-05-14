@@ -19,6 +19,25 @@ def default_name_from_data(data_path: str) -> str:
     return f"rtdetr_{stem}"
 
 
+def resolve_weights_path(weights: str, project: str, run_name: str) -> Path:
+    """Resolve best.pt/last.pt across Ultralytics save-dir variants."""
+    candidates = [
+        Path(weights),
+        Path(project) / run_name / "weights" / Path(weights).name,
+        Path("runs") / "detect" / project / run_name / "weights" / Path(weights).name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return Path(weights)
+
+
+def get_ultralytics_save_dir(model, fallback: Path) -> Path:
+    validator = getattr(model, "validator", None)
+    save_dir = getattr(validator, "save_dir", None)
+    return Path(save_dir) if save_dir else fallback
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate RT-DETR with Ultralytics.")
     parser.add_argument("--weights", required=True, help="Path to best.pt/last.pt.")
@@ -97,7 +116,12 @@ def main() -> int:
             "Ultralytics is required for RT-DETR. Install it with: pip install ultralytics"
         ) from exc
 
-    model = RTDETR(args.weights)
+    weights_path = resolve_weights_path(args.weights, args.project, run_name)
+    if not weights_path.exists():
+        raise SystemExit(f"Weights file does not exist: {args.weights}")
+
+    print(f"Using weights: {weights_path}")
+    model = RTDETR(str(weights_path))
     split_used = args.split
     try:
         metrics_obj = model.val(
@@ -131,8 +155,9 @@ def main() -> int:
     for key in ("precision", "recall", "mAP50", "mAP50-95"):
         print(f"{key}: {metrics[key]:.6f}")
 
-    summary_path = output_dir / "metrics_summary.txt"
-    save_metrics_summary(summary_path, metrics, split_used, args.weights)
+    save_dir = get_ultralytics_save_dir(model, output_dir)
+    summary_path = save_dir / "metrics_summary.txt"
+    save_metrics_summary(summary_path, metrics, split_used, str(weights_path))
     print(f"Saved metrics summary: {summary_path}")
     return 0
 

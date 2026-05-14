@@ -44,6 +44,8 @@
 - `scripts/val_rtdetr_cctsdb.sh`
 - `scripts/val_rtdetr_tt100k.sh`
 - `scripts/predict_rtdetr_sample.sh`
+- `scripts/run_rtdetr_cctsdb_bg.sh`
+- `scripts/run_rtdetr_tt100k_bg.sh`
 
 这些文件只服务于 RT-DETR，不会修改 Faster R-CNN、RetinaNet、FCOS 的训练代码。
 
@@ -119,12 +121,48 @@ GPU_ID=2 bash scripts/train_rtdetr_tt100k.sh
 - `outputs/rtdetr_cctsdb`
 - `outputs/rtdetr_tt100k`
 
-每次训练会在输出目录中保存解析后的数据集 yaml，并生成：
+部分 Ultralytics 版本会把 RT-DETR 的实际结果目录放到 `runs/detect/outputs/rtdetr_cctsdb` 或 `runs/detect/outputs/rtdetr_tt100k`。训练脚本结束时会打印真实的 `best.pt` 和 `last.pt` 路径，以最终日志为准。
+
+每次训练会在输出目录中保存解析后的数据集 yaml，并生成类似：
 
 - `outputs/rtdetr_cctsdb/weights/best.pt`
 - `outputs/rtdetr_cctsdb/weights/last.pt`
 - `outputs/rtdetr_tt100k/weights/best.pt`
 - `outputs/rtdetr_tt100k/weights/last.pt`
+
+如果日志显示保存到了 `runs/detect/outputs/...`，权重路径也以日志中的路径为准。
+
+## 后台训练
+
+后台训练 CCTSDB：
+
+```bash
+GPU_ID=2 EPOCHS=50 BATCH=4 bash scripts/run_rtdetr_cctsdb_bg.sh
+```
+
+后台训练 TT100K：
+
+```bash
+GPU_ID=2 EPOCHS=80 BATCH=4 bash scripts/run_rtdetr_tt100k_bg.sh
+```
+
+脚本会输出后台进程 PID 和日志路径。查看训练进度：
+
+```bash
+tail -f logs/rtdetr_cctsdb_*.log
+```
+
+查看进程是否还在运行：
+
+```bash
+ps -f -p PID
+```
+
+如果需要停止后台训练：
+
+```bash
+kill PID
+```
 
 ## 验证
 
