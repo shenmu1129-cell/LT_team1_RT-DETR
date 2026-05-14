@@ -1,0 +1,53 @@
+# TODO: Replace the placeholder class names below with the real 45 TT100K
+# class names in exactly the same order as the YOLO label class ids.
+path: /home/sutongtong/LanTu_team1/TT100K-2016
+train: train/images
+val: test/images
+test: test/images
+nc: 45
+names:
+  - TODO_CLASS_0
+  - TODO_CLASS_1
+  - TODO_CLASS_2
+  - TODO_CLASS_3
+  - TODO_CLASS_4
+  - TODO_CLASS_5
+  - TODO_CLASS_6
+  - TODO_CLASS_7
+  - TODO_CLASS_8
+  - TODO_CLASS_9
+  - TODO_CLASS_10
+  - TODO_CLASS_11
+  - TODO_CLASS_12
+  - TODO_CLASS_13
+  - TODO_CLASS_14
+  - TODO_CLASS_15
+  - TODO_CLASS_16
+  - TODO_CLASS_17
+  - TODO_CLASS_18
+  - TODO_CLASS_19
+  - TODO_CLASS_20
+  - TODO_CLASS_21
+  - TODO_CLASS_22
+  - TODO_CLASS_23
+  - TODO_CLASS_24
+  - TODO_CLASS_25
+  - TODO_CLASS_26
+  - TODO_CLASS_27
+  - TODO_CLASS_28
+  - TODO_CLASS_29
+  - TODO_CLASS_30
+  - TODO_CLASS_31
+  - TODO_CLASS_32
+  - TODO_CLASS_33
+  - TODO_CLASS_34
+  - TODO_CLASS_35
+  - TODO_CLASS_36
+  - TODO_CLASS_37
+  - TODO_CLASS_38
+  - TODO_CLASS_39
+  - TODO_CLASS_40
+  - TODO_CLASS_41
+  - TODO_CLASS_42
+  - TODO_CLASS_43
+  - TODO_CLASS_44

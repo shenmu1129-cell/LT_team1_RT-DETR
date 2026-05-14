@@ -1,0 +1,6 @@
+path: /home/sutongtong/LanTu_team1/advYOLO+AdaAD+CCTSDB/CCTSDB2021
+train: images/train
+val: images/test
+test: images/test
+nc: 3
+names: ['mandatory', 'prohibitory', 'warning']
