@@ -32,6 +32,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data", required=True, help="Clean YOLO dataset yaml.")
     parser.add_argument("--adv-images", required=True, help="Adversarial image directory.")
     parser.add_argument(
+        "--adv-strip-suffix",
+        default="_adv",
+        help="Suffix to strip from adversarial filename stems before matching clean files.",
+    )
+    parser.add_argument(
         "--adv-labels",
         default=None,
         help="Adversarial label directory. If omitted, clean labels are reused.",
@@ -73,6 +78,28 @@ def label_map(label_dir: Path) -> Dict[str, Path]:
 
 def image_map(image_dir: Path) -> Dict[str, Path]:
     return {path.stem: path for path in list_images(image_dir)}
+
+
+def normalize_adv_stem(stem: str, strip_suffix: str) -> str:
+    if strip_suffix and stem.endswith(strip_suffix):
+        return stem[: -len(strip_suffix)]
+    return stem
+
+
+def normalized_image_map(image_dir: Path, strip_suffix: str) -> Dict[str, Path]:
+    mapped: Dict[str, Path] = {}
+    for path in list_images(image_dir):
+        mapped[normalize_adv_stem(path.stem, strip_suffix)] = path
+    return mapped
+
+
+def normalized_label_map(label_dir: Optional[Path], strip_suffix: str) -> Dict[str, Path]:
+    if label_dir is None or not label_dir.is_dir():
+        return {}
+    mapped: Dict[str, Path] = {}
+    for path in sorted(label_dir.rglob("*.txt")):
+        mapped[normalize_adv_stem(path.stem, strip_suffix)] = path
+    return mapped
 
 
 def count_gt_boxes(label_files: List[Path]) -> int:
@@ -173,8 +200,8 @@ def main() -> int:
 
     clean_labels = label_map(clean_label_dir)
     clean_images = image_map(clean_image_dir)
-    adv_images = image_map(adv_image_dir)
-    adv_labels = label_map(adv_label_dir) if adv_label_dir else {}
+    adv_images = normalized_image_map(adv_image_dir, args.adv_strip_suffix)
+    adv_labels = normalized_label_map(adv_label_dir, args.adv_strip_suffix)
 
     samples: List[Dict[str, Path]] = []
     for stem, clean_image in sorted(clean_images.items()):
@@ -194,7 +221,8 @@ def main() -> int:
 
     if not samples:
         raise SystemExit(
-            "No matched clean/adversarial samples found. Check --adv-images and filenames."
+            "No matched clean/adversarial samples found. Check --adv-images, "
+            "--adv-strip-suffix, and filenames."
         )
 
     if args.max_samples > 0 and len(samples) > args.max_samples:
@@ -223,6 +251,7 @@ def main() -> int:
     print(f"Weights: {weights_path}")
     print(f"Clean images: {clean_image_dir}")
     print(f"Adv images: {adv_image_dir}")
+    print(f"Adv strip suffix: {args.adv_strip_suffix!r}")
 
     model = RTDETR(str(weights_path))
     clean_metrics = extract_metrics(run_val(model, clean_yaml, args, "clean"))

@@ -206,6 +206,12 @@ ADV_LABELS=/path/to/adversarial/labels
 
 如果不传 `ADV_LABELS`，脚本会复用 clean labels 作为对抗样本的 GT。ASR 默认按 Recall 下降比例计算：
 
+对抗图片如果是 `18993_adv.jpg` 这种命名，脚本会默认去掉 `_adv` 后缀再与 clean 图片 `18993.jpg` 和标签 `18993.txt` 匹配。如果你的后缀不同，可以设置：
+
+```bash
+ADV_STRIP_SUFFIX=_attack
+```
+
 ```text
 ASR = (Clean Recall - Adv Recall) / Clean Recall * 100
 ```
