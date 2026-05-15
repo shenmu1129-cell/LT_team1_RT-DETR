@@ -43,6 +43,7 @@
 - `scripts/train_rtdetr_tt100k.sh`
 - `scripts/val_rtdetr_cctsdb.sh`
 - `scripts/val_rtdetr_tt100k.sh`
+- `scripts/eval_rtdetr_clean_adv.sh`
 - `scripts/predict_rtdetr_sample.sh`
 - `scripts/run_rtdetr_cctsdb_bg.sh`
 - `scripts/run_rtdetr_tt100k_bg.sh`
@@ -182,6 +183,32 @@ GPU_ID=2 bash scripts/val_rtdetr_tt100k.sh
 
 - `outputs/rtdetr_cctsdb/metrics_summary.txt`
 - `outputs/rtdetr_tt100k/metrics_summary.txt`
+
+## Clean/Adv 评估
+
+如果需要得到跨攻击评估表格，例如 `Clean mAP50`、`Adv mAP50`、`Clean Recall`、`Adv Recall`、`ASR`，使用：
+
+```bash
+GPU_ID=2 \
+WEIGHTS=runs/detect/outputs/rtdetr_cctsdb/weights/best.pt \
+ADV_IMAGES=/path/to/adversarial/images \
+MAX_SAMPLES=200 \
+SOURCE_MODEL=YOLOv9 \
+TARGET_DETECTOR=RT-DETR \
+bash scripts/eval_rtdetr_clean_adv.sh
+```
+
+默认使用 `data/cctsdb.yaml` 的 `test` split 作为 clean 数据，并按照文件名匹配 adversarial 图片。若对抗样本标签目录不同，可以额外传入：
+
+```bash
+ADV_LABELS=/path/to/adversarial/labels
+```
+
+如果不传 `ADV_LABELS`，脚本会复用 clean labels 作为对抗样本的 GT。ASR 默认按 Recall 下降比例计算：
+
+```text
+ASR = (Clean Recall - Adv Recall) / Clean Recall * 100
+```
 
 ## 样例预测
 
