@@ -52,11 +52,9 @@
 
 ## TT100K 类别名提醒
 
-当前 `data/tt100k.yaml` 中使用的是 `TODO_CLASS_0` 到 `TODO_CLASS_44` 占位类别名，因为当前项目里没有找到可复用的 TT100K yaml 或 `classes.txt`。
+当前 `data/tt100k.yaml` 中使用的是 `class_0` 到 `class_44` 通用类别名，因为当前项目里没有找到可复用的 TT100K yaml 或 `classes.txt`。
 
-正式训练或汇报 TT100K 结果前，必须把这 45 个类别名替换成真实类别名，并且顺序必须和 YOLO 标签里的 class id 完全一致。否则类别指标和结果解释会对应错误。
-
-只要 `data/tt100k.yaml` 里仍然存在 TODO 类别名，数据集检查脚本和训练脚本会主动失败，避免误训练。
+这样可以正常训练并计算整体 mAP、Recall 等指标。正式汇报 class-wise 结果前，仍然建议把这 45 个类别名替换成真实 TT100K 类别名，并且顺序必须和 YOLO 标签里的 class id 完全一致。否则类别指标和结果解释会对应错误。
 
 ## 环境依赖
 
