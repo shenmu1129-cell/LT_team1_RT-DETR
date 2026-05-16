@@ -214,6 +214,12 @@ ADV_STRIP_SUFFIX=_attack
 ASR = (Clean Recall - Adv Recall) / Clean Recall * 100
 ```
 
+脚本还会输出 `Paired Object ASR`：只统计 clean 图中已被目标检测器检出的 GT 框，再看对应 adv 图中这些框是否检测失败。这个指标更接近攻击论文中的“攻击成功率”。可调参数：
+
+```bash
+CONF=0.25 PRED_IOU=0.7 MATCH_IOU=0.5
+```
+
 ## 样例预测
 
 ```bash

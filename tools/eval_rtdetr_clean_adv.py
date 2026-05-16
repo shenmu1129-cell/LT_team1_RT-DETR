@@ -8,12 +8,17 @@ import os
 import random
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import yaml
 except ImportError as exc:  # pragma: no cover - ultralytics normally installs PyYAML
     raise SystemExit("PyYAML is required. Install it with: pip install pyyaml") from exc
+
+try:
+    from PIL import Image
+except ImportError as exc:  # pragma: no cover - ultralytics normally installs Pillow
+    raise SystemExit("Pillow is required. Install it with: pip install pillow") from exc
 
 from check_yolo_dataset import (
     list_images,
@@ -53,6 +58,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--imgsz", type=int, default=640, help="Evaluation image size.")
     parser.add_argument("--batch", type=int, default=8, help="Evaluation batch size.")
     parser.add_argument("--device", default="0", help="Ultralytics device, e.g. 0 or cpu.")
+    parser.add_argument(
+        "--conf",
+        type=float,
+        default=0.25,
+        help="Confidence threshold for paired object-level ASR.",
+    )
+    parser.add_argument(
+        "--pred-iou",
+        type=float,
+        default=0.7,
+        help="NMS IoU used by model.predict for paired object-level ASR.",
+    )
+    parser.add_argument(
+        "--match-iou",
+        type=float,
+        default=0.5,
+        help="IoU threshold for matching detections to GT in paired object-level ASR.",
+    )
     parser.add_argument("--project", default="outputs", help="Output project directory.")
     parser.add_argument("--name", default="rtdetr_clean_adv_eval", help="Evaluation run name.")
     parser.add_argument("--seed", type=int, default=0, help="Sampling seed.")
@@ -113,6 +136,71 @@ def count_gt_boxes(label_files: List[Path]) -> int:
     return total
 
 
+def yolo_to_xyxy(line: str, image_size: Tuple[int, int]) -> Optional[Dict[str, Any]]:
+    parts = line.split()
+    if len(parts) != 5:
+        return None
+    cls, x_center, y_center, width, height = parts
+    img_w, img_h = image_size
+    cls_id = int(float(cls))
+    x_center = float(x_center) * img_w
+    y_center = float(y_center) * img_h
+    width = float(width) * img_w
+    height = float(height) * img_h
+    return {
+        "cls": cls_id,
+        "box": [
+            x_center - width / 2.0,
+            y_center - height / 2.0,
+            x_center + width / 2.0,
+            y_center + height / 2.0,
+        ],
+    }
+
+
+def read_gt_objects(label_file: Path, image_file: Path) -> List[Dict[str, Any]]:
+    if not label_file.exists():
+        return []
+    with Image.open(image_file) as image:
+        image_size = image.size
+    objects: List[Dict[str, Any]] = []
+    for line in label_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        obj = yolo_to_xyxy(line, image_size)
+        if obj is not None:
+            objects.append(obj)
+    return objects
+
+
+def box_iou(box_a: List[float], box_b: List[float]) -> float:
+    x1 = max(box_a[0], box_b[0])
+    y1 = max(box_a[1], box_b[1])
+    x2 = min(box_a[2], box_b[2])
+    y2 = min(box_a[3], box_b[3])
+    inter_w = max(0.0, x2 - x1)
+    inter_h = max(0.0, y2 - y1)
+    inter = inter_w * inter_h
+    area_a = max(0.0, box_a[2] - box_a[0]) * max(0.0, box_a[3] - box_a[1])
+    area_b = max(0.0, box_b[2] - box_b[0]) * max(0.0, box_b[3] - box_b[1])
+    denom = area_a + area_b - inter
+    return inter / denom if denom > 0 else 0.0
+
+
+def has_matching_detection(
+    gt_object: Dict[str, Any],
+    detections: List[Dict[str, Any]],
+    match_iou: float,
+) -> bool:
+    for detection in detections:
+        if detection["cls"] != gt_object["cls"]:
+            continue
+        if box_iou(gt_object["box"], detection["box"]) >= match_iou:
+            return True
+    return False
+
+
 def symlink_or_copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -144,6 +232,8 @@ def prepare_eval_dataset(
         dst_label = label_dir / f"{dst_image.stem}.txt"
         symlink_or_copy(src_image, dst_image)
         shutil.copy2(src_label, dst_label)
+        sample[f"{image_key}_eval"] = dst_image
+        sample[f"{label_key}_eval"] = dst_label
 
     yaml_path = root / "data.yaml"
     yaml_data = {
@@ -176,6 +266,65 @@ def run_val(model, data_yaml: Path, args: argparse.Namespace, name_suffix: str):
 
 def format_percent(value: float) -> float:
     return value * 100.0
+
+
+def collect_predictions(model, image_dir: Path, args: argparse.Namespace) -> Dict[str, List[Dict[str, Any]]]:
+    predictions: Dict[str, List[Dict[str, Any]]] = {}
+    results = model.predict(
+        source=str(image_dir),
+        imgsz=args.imgsz,
+        conf=args.conf,
+        iou=args.pred_iou,
+        device=args.device,
+        stream=True,
+        verbose=False,
+    )
+    for result in results:
+        image_path = Path(result.path)
+        detections: List[Dict[str, Any]] = []
+        boxes = getattr(result, "boxes", None)
+        if boxes is not None and len(boxes) > 0:
+            xyxy = boxes.xyxy.cpu().tolist()
+            classes = boxes.cls.cpu().tolist()
+            confs = boxes.conf.cpu().tolist()
+            for box, cls_id, conf in zip(xyxy, classes, confs):
+                detections.append(
+                    {"box": [float(v) for v in box], "cls": int(cls_id), "conf": float(conf)}
+                )
+        predictions[image_path.name] = detections
+    return predictions
+
+
+def compute_paired_object_asr(model, samples: List[Dict[str, Path]], args: argparse.Namespace) -> Dict[str, float]:
+    clean_dir = samples[0]["clean_image_eval"].parent
+    adv_dir = samples[0]["adv_image_eval"].parent
+    clean_predictions = collect_predictions(model, clean_dir, args)
+    adv_predictions = collect_predictions(model, adv_dir, args)
+
+    clean_detected = 0
+    adv_missed = 0
+    total_gt = 0
+    for sample in samples:
+        gt_objects = read_gt_objects(sample["clean_label_eval"], sample["clean_image_eval"])
+        total_gt += len(gt_objects)
+        clean_dets = clean_predictions.get(sample["clean_image_eval"].name, [])
+        adv_dets = adv_predictions.get(sample["adv_image_eval"].name, [])
+        for gt_object in gt_objects:
+            if not has_matching_detection(gt_object, clean_dets, args.match_iou):
+                continue
+            clean_detected += 1
+            if not has_matching_detection(gt_object, adv_dets, args.match_iou):
+                adv_missed += 1
+
+    paired_asr = adv_missed / clean_detected * 100.0 if clean_detected else 0.0
+    clean_detect_rate = clean_detected / total_gt * 100.0 if total_gt else 0.0
+    return {
+        "paired_asr": paired_asr,
+        "clean_detected": float(clean_detected),
+        "adv_missed": float(adv_missed),
+        "total_gt": float(total_gt),
+        "clean_detect_rate": clean_detect_rate,
+    }
 
 
 def main() -> int:
@@ -267,14 +416,25 @@ def main() -> int:
     asr = ((clean_recall - adv_recall) / clean_recall * 100.0) if clean_recall > 0 else 0.0
     print(f"Adv mAP50={adv_map50:.2f}, Adv Recall={adv_recall:.2f}, ASR={asr:.2f}")
 
+    paired = compute_paired_object_asr(model, samples, args)
+    print(
+        "Paired object ASR="
+        f"{paired['paired_asr']:.2f} "
+        f"(adv missed {int(paired['adv_missed'])}/"
+        f"{int(paired['clean_detected'])} clean-detected GT boxes; "
+        f"total GT {int(paired['total_gt'])}; "
+        f"conf={args.conf}, match_iou={args.match_iou})"
+    )
+
     table = "\n".join(
         [
             "",
-            "| Source Model | Target Detector | Clean mAP50 | Adv mAP50 | Clean Recall | Adv Recall | ASR |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
+            "| Source Model | Target Detector | Clean mAP50 | Adv mAP50 | Clean Recall | Adv Recall | Recall-drop ASR | Paired Object ASR |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
             (
                 f"| {args.source_model} | {args.target_detector} | {clean_map50:.1f} | "
-                f"{adv_map50:.1f} | {clean_recall:.1f} | {adv_recall:.1f} | {asr:.1f} |"
+                f"{adv_map50:.1f} | {clean_recall:.1f} | {adv_recall:.1f} | "
+                f"{asr:.1f} | {paired['paired_asr']:.1f} |"
             ),
         ]
     )
