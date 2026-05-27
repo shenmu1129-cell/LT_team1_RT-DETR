@@ -7,6 +7,14 @@ batch: 2
 conf: 0.35
 pred_iou: 0.7
 match_iou: 0.5
+skip_clean_val: true
+skip_paired_asr: true
+clean_metrics:
+  map50: 82.1
+  map50_95: 63.0
+  precision: 84.1
+  recall: 80.4
+  f1: 82.2
 attacks:
   TOG:
     images: /home/sutongtong/LanTu_team1/advYOLO+AdaAD+CCTSDB/TOG/adv_images

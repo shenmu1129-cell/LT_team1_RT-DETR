@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 try:
     import yaml
@@ -24,15 +25,98 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu", default="0")
     parser.add_argument("--source-model", default="")
     parser.add_argument("--target-detector", default="RT-DETR")
+    parser.add_argument("--attacks", default="", help="Comma-separated attack names to run.")
+    parser.add_argument("--force", action="store_true", help="Re-run attacks even if cached results exist.")
+    parser.add_argument("--batch", type=int, default=None)
+    parser.add_argument("--imgsz", type=int, default=None)
+    parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument("--conf", type=float, default=None)
+    parser.add_argument("--pred-iou", type=float, default=None)
+    parser.add_argument("--match-iou", type=float, default=None)
+    parser.add_argument("--skip-clean-val", action="store_true")
+    parser.add_argument("--run-clean-val", action="store_true")
+    parser.add_argument("--skip-paired-asr", action="store_true")
+    parser.add_argument("--run-paired-asr", action="store_true")
     return parser.parse_args()
 
 
-def run_one_attack(name: str, attack: Dict[str, Any], cfg: Dict[str, Any], args: argparse.Namespace):
+def cfg_value(cfg: Dict[str, Any], args: argparse.Namespace, key: str, default: Any) -> Any:
+    value = getattr(args, key.replace("-", "_"), None)
+    return cfg.get(key, default) if value is None else value
+
+
+def selected_attacks(args: argparse.Namespace) -> Optional[set[str]]:
+    if not args.attacks:
+        return None
+    return {item.strip() for item in args.attacks.split(",") if item.strip()}
+
+
+def cache_path_for(output_prefix: Path, dataset: str, name: str) -> Path:
+    return output_prefix.parent / "attack_cache" / f"{dataset}_{name.lower()}.yaml"
+
+
+def log_path_for(output_prefix: Path, dataset: str, name: str) -> Path:
+    return output_prefix.parent / "attack_logs" / f"{dataset}_{name.lower()}.log"
+
+
+def read_cached_result(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def write_cached_result(path: Path, row: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(row, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def run_and_log(cmd: List[str], env: Dict[str, str], log_path: Path) -> tuple[int, str]:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    collected: List[str] = []
+    with log_path.open("w", encoding="utf-8") as log_file:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            bufsize=1,
+        )
+        if proc.stdout is not None:
+            for line in proc.stdout:
+                print(line, end="")
+                log_file.write(line)
+                collected.append(line)
+        return_code = proc.wait()
+    return return_code, "".join(collected)
+
+
+def run_one_attack(
+    name: str,
+    attack: Dict[str, Any],
+    cfg: Dict[str, Any],
+    args: argparse.Namespace,
+    output_prefix: Path,
+):
+    cache_path = cache_path_for(output_prefix, str(cfg["dataset"]), name)
+    if cache_path.exists() and not args.force:
+        print(f"[RESUME] {name}: using cached result: {cache_path}")
+        return read_cached_result(cache_path)
+
     images = attack.get("images")
     labels = attack.get("labels")
     if not images or not Path(str(images)).expanduser().exists():
         print(f"[SKIP] {name}: adversarial image directory missing: {images}")
         return None
+
+    clean_metrics = cfg.get("clean_metrics") or {}
+    skip_clean_val = bool(cfg.get("skip_clean_val", False)) or args.skip_clean_val
+    skip_paired_asr = bool(cfg.get("skip_paired_asr", False)) or args.skip_paired_asr
+    if args.run_clean_val:
+        skip_clean_val = False
+    if args.run_paired_asr:
+        skip_paired_asr = False
 
     cmd = [
         sys.executable,
@@ -44,11 +128,11 @@ def run_one_attack(name: str, attack: Dict[str, Any], cfg: Dict[str, Any], args:
         "--adv-images",
         str(images),
         "--max-samples",
-        str(cfg.get("max_samples", 0)),
+        str(cfg_value(cfg, args, "max_samples", 0)),
         "--imgsz",
-        str(cfg.get("imgsz", 960)),
+        str(cfg_value(cfg, args, "imgsz", 960)),
         "--batch",
-        str(cfg.get("batch", 2)),
+        str(cfg_value(cfg, args, "batch", 2)),
         "--device",
         "0",
         "--project",
@@ -60,30 +144,48 @@ def run_one_attack(name: str, attack: Dict[str, Any], cfg: Dict[str, Any], args:
         "--target-detector",
         args.target_detector,
         "--conf",
-        str(cfg.get("conf", 0.35)),
+        str(cfg_value(cfg, args, "conf", 0.35)),
         "--pred-iou",
-        str(cfg.get("pred_iou", 0.7)),
+        str(cfg_value(cfg, args, "pred_iou", 0.7)),
         "--match-iou",
-        str(cfg.get("match_iou", 0.5)),
+        str(cfg_value(cfg, args, "match_iou", 0.5)),
     ]
     if labels:
         cmd.extend(["--adv-labels", str(labels)])
+    if skip_clean_val:
+        if "recall" not in clean_metrics:
+            print(f"[FAIL] {name}: skip_clean_val=true but clean_metrics.recall is missing.")
+            return None
+        cmd.extend(
+            [
+                "--skip-clean-val",
+                "--clean-map50",
+                str(clean_metrics.get("map50", 0.0)),
+                "--clean-map50-95",
+                str(clean_metrics.get("map50_95", 0.0)),
+                "--clean-precision",
+                str(clean_metrics.get("precision", 0.0)),
+                "--clean-recall",
+                str(clean_metrics["recall"]),
+                "--clean-f1",
+                str(clean_metrics.get("f1", 0.0)),
+            ]
+        )
+    if skip_paired_asr:
+        cmd.append("--skip-paired-asr")
 
     print(f"\n===== Evaluating {name} =====")
-    proc = subprocess.run(
+    log_path = log_path_for(output_prefix, str(cfg["dataset"]), name)
+    print(f"Log: {log_path}")
+    return_code, text = run_and_log(
         cmd,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        env={**dict(__import__("os").environ), "CUDA_VISIBLE_DEVICES": args.gpu},
+        env={**dict(os.environ), "CUDA_VISIBLE_DEVICES": args.gpu},
+        log_path=log_path,
     )
-    print(proc.stdout)
-    if proc.returncode != 0:
-        print(f"[FAIL] {name}: evaluator exited with {proc.returncode}")
+    if return_code != 0:
+        print(f"[FAIL] {name}: evaluator exited with {return_code}")
         return None
 
-    text = proc.stdout
     clean = re.search(
         r"Clean mAP50=([0-9.]+), Clean mAP50-95=([0-9.]+), "
         r"Clean Precision=([0-9.]+), Clean Recall=([0-9.]+), Clean F1=([0-9.]+)",
@@ -98,7 +200,7 @@ def run_one_attack(name: str, attack: Dict[str, Any], cfg: Dict[str, Any], args:
     if not clean or not adv:
         print(f"[FAIL] {name}: could not parse metrics")
         return None
-    return {
+    row = {
         "attack": name,
         "target_detector": args.target_detector,
         "clean_map50": float(clean.group(1)),
@@ -114,6 +216,9 @@ def run_one_attack(name: str, attack: Dict[str, Any], cfg: Dict[str, Any], args:
         "recall_drop_asr": float(adv.group(6)),
         "paired_object_asr": float(paired.group(1)) if paired else 0.0,
     }
+    write_cached_result(cache_path, row)
+    print(f"Cached result: {cache_path}")
+    return row
 
 
 def write_outputs(rows: List[Dict[str, Any]], output_prefix: Path) -> None:
@@ -160,14 +265,18 @@ def main() -> int:
     args = parse_args()
     with Path(args.config).open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
+    output_prefix = Path(args.output_prefix)
+    wanted = selected_attacks(args)
     rows = []
     for name, attack in cfg["attacks"].items():
-        row = run_one_attack(name, attack or {}, cfg, args)
+        if wanted is not None and name not in wanted:
+            continue
+        row = run_one_attack(name, attack or {}, cfg, args, output_prefix)
         if row:
             rows.append(row)
     if not rows:
         raise SystemExit("No attacks were evaluated. Fill the adv image paths in the config.")
-    write_outputs(rows, Path(args.output_prefix))
+    write_outputs(rows, output_prefix)
     return 0
 
 
