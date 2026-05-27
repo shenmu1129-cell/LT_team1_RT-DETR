@@ -55,6 +55,18 @@ TT100K：
 GPU_ID=2 bash rtdetr_paper_experiments/scripts/train_ours_rtdetr_tt100k_bg.sh
 ```
 
+默认每个 epoch 随机固定抽取 `MAX_TRAIN_SAMPLES=2000` 张图训练生成器，避免全量训练过慢。可以按需覆盖：
+
+```bash
+GPU_ID=2 MAX_TRAIN_SAMPLES=4000 EPOCHS=30 BATCH=16 IMGSZ=640 bash rtdetr_paper_experiments/scripts/train_ours_rtdetr_cctsdb_bg.sh
+```
+
+如果要使用全量训练集，设置：
+
+```bash
+MAX_TRAIN_SAMPLES=0
+```
+
 默认会输出到：
 
 ```bash

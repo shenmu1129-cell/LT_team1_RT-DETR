@@ -270,6 +270,7 @@ class TrainConfig:
     conf: float
     iou: float
     eval_samples: int
+    max_train_samples: int
     seed: int
 
 
@@ -294,6 +295,12 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--iou", type=float, default=0.5)
     parser.add_argument("--eval-samples", type=int, default=64)
+    parser.add_argument(
+        "--max-train-samples",
+        type=int,
+        default=0,
+        help="Use at most this many training images per epoch. 0 means full split.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     return TrainConfig(**{**vars(args), "output": Path(args.output)})
@@ -363,7 +370,18 @@ def main() -> int:
     print(f"Output: {cfg.output}")
     print(f"Target RT-DETR: {cfg.weights}")
 
-    dataset = YoloImageDataset(cfg.data, cfg.split, cfg.imgsz)
+    full_dataset = YoloImageDataset(cfg.data, cfg.split, cfg.imgsz)
+    if cfg.max_train_samples > 0 and cfg.max_train_samples < len(full_dataset):
+        rng = random.Random(cfg.seed)
+        indices = list(range(len(full_dataset)))
+        rng.shuffle(indices)
+        indices = sorted(indices[: cfg.max_train_samples])
+        dataset = Subset(full_dataset, indices)
+        print(f"Using training subset: {len(dataset)}/{len(full_dataset)} images")
+    else:
+        dataset = full_dataset
+        print(f"Using full training split: {len(dataset)} images")
+
     loader = DataLoader(
         dataset,
         batch_size=cfg.batch,
@@ -372,9 +390,10 @@ def main() -> int:
         pin_memory=True,
         drop_last=True,
     )
-    eval_indices = list(range(min(len(dataset), max(cfg.eval_samples, cfg.batch))))
+    eval_base = full_dataset if isinstance(dataset, Subset) else dataset
+    eval_indices = list(range(min(len(eval_base), max(cfg.eval_samples, cfg.batch))))
     eval_loader = DataLoader(
-        Subset(dataset, eval_indices),
+        Subset(eval_base, eval_indices),
         batch_size=cfg.batch,
         shuffle=False,
         num_workers=max(0, min(2, cfg.workers)),

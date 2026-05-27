@@ -12,6 +12,7 @@ BATCH="${BATCH:-8}"
 IMGSZ="${IMGSZ:-640}"
 WORKERS="${WORKERS:-4}"
 EPS="${EPS:-0.031372549}"
+MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-2000}"
 LOG_FILE="${LOG_FILE:-rtdetr_paper_experiments/logs/train_ours_rtdetr_tt100k_$(date +%Y%m%d_%H%M%S).log}"
 
 nohup env CUDA_VISIBLE_DEVICES="${GPU_ID}" python rtdetr_paper_experiments/tools/train_ours_rtdetr_advgan.py \
@@ -23,9 +24,11 @@ nohup env CUDA_VISIBLE_DEVICES="${GPU_ID}" python rtdetr_paper_experiments/tools
   --batch "${BATCH}" \
   --imgsz "${IMGSZ}" \
   --workers "${WORKERS}" \
-  --eps "${EPS}" > "${LOG_FILE}" 2>&1 &
+  --eps "${EPS}" \
+  --max-train-samples "${MAX_TRAIN_SAMPLES}" > "${LOG_FILE}" 2>&1 &
 
 echo "Started Ours/AdvGAN-AdaAD RT-DETR training on TT100K."
 echo "PID: $!"
 echo "Log: ${LOG_FILE}"
+echo "Max train samples per epoch: ${MAX_TRAIN_SAMPLES}"
 echo "Watch: tail -f ${LOG_FILE}"
