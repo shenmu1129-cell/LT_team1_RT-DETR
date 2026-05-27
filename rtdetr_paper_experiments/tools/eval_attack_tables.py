@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Run RT-DETR clean/adv evaluation for multiple attacks and write paper tables."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
+
+try:
+    import yaml
+except ImportError as exc:  # pragma: no cover
+    raise SystemExit("PyYAML is required. Install it with: pip install pyyaml") from exc
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate attacks and generate RT-DETR table.")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--output-prefix", required=True)
+    parser.add_argument("--gpu", default="0")
+    parser.add_argument("--source-model", default="")
+    parser.add_argument("--target-detector", default="RT-DETR")
+    return parser.parse_args()
+
+
+def run_one_attack(name: str, attack: Dict[str, Any], cfg: Dict[str, Any], args: argparse.Namespace):
+    images = attack.get("images")
+    labels = attack.get("labels")
+    if not images or not Path(str(images)).expanduser().exists():
+        print(f"[SKIP] {name}: adversarial image directory missing: {images}")
+        return None
+
+    cmd = [
+        sys.executable,
+        "tools/eval_rtdetr_clean_adv.py",
+        "--weights",
+        str(cfg["weights"]),
+        "--data",
+        str(cfg["data"]),
+        "--adv-images",
+        str(images),
+        "--max-samples",
+        str(cfg.get("max_samples", 0)),
+        "--imgsz",
+        str(cfg.get("imgsz", 960)),
+        "--batch",
+        str(cfg.get("batch", 2)),
+        "--device",
+        "0",
+        "--project",
+        "rtdetr_paper_experiments/results/raw_eval",
+        "--name",
+        f"{cfg['dataset']}_{name.lower()}",
+        "--source-model",
+        args.source_model or name,
+        "--target-detector",
+        args.target_detector,
+        "--conf",
+        str(cfg.get("conf", 0.35)),
+        "--pred-iou",
+        str(cfg.get("pred_iou", 0.7)),
+        "--match-iou",
+        str(cfg.get("match_iou", 0.5)),
+    ]
+    if labels:
+        cmd.extend(["--adv-labels", str(labels)])
+
+    print(f"\n===== Evaluating {name} =====")
+    proc = subprocess.run(
+        cmd,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env={**dict(__import__("os").environ), "CUDA_VISIBLE_DEVICES": args.gpu},
+    )
+    print(proc.stdout)
+    if proc.returncode != 0:
+        print(f"[FAIL] {name}: evaluator exited with {proc.returncode}")
+        return None
+
+    text = proc.stdout
+    clean = re.search(r"Clean mAP50=([0-9.]+), Clean Recall=([0-9.]+)", text)
+    adv = re.search(r"Adv mAP50=([0-9.]+), Adv Recall=([0-9.]+), ASR=([0-9.]+)", text)
+    paired = re.search(r"Paired object ASR=([0-9.]+)", text)
+    if not clean or not adv:
+        print(f"[FAIL] {name}: could not parse metrics")
+        return None
+    return {
+        "attack": name,
+        "target_detector": args.target_detector,
+        "clean_map50": float(clean.group(1)),
+        "adv_map50": float(adv.group(1)),
+        "clean_recall": float(clean.group(2)),
+        "adv_recall": float(adv.group(2)),
+        "recall_drop_asr": float(adv.group(3)),
+        "paired_object_asr": float(paired.group(1)) if paired else 0.0,
+    }
+
+
+def write_outputs(rows: List[Dict[str, Any]], output_prefix: Path) -> None:
+    output_prefix.parent.mkdir(parents=True, exist_ok=True)
+    csv_path = output_prefix.with_suffix(".csv")
+    md_path = output_prefix.with_suffix(".md")
+    fields = [
+        "attack",
+        "target_detector",
+        "clean_map50",
+        "adv_map50",
+        "clean_recall",
+        "adv_recall",
+        "recall_drop_asr",
+        "paired_object_asr",
+    ]
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    lines = [
+        "| Attack | Target Detector | Clean mAP50 | Adv mAP50 | Clean Recall | Adv Recall | Recall-drop ASR | Paired Object ASR |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['attack']} | {row['target_detector']} | {row['clean_map50']:.1f} | "
+            f"{row['adv_map50']:.1f} | {row['clean_recall']:.1f} | {row['adv_recall']:.1f} | "
+            f"{row['recall_drop_asr']:.1f} | {row['paired_object_asr']:.1f} |"
+        )
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Saved CSV: {csv_path}")
+    print(f"Saved Markdown: {md_path}")
+
+
+def main() -> int:
+    args = parse_args()
+    with Path(args.config).open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    rows = []
+    for name, attack in cfg["attacks"].items():
+        row = run_one_attack(name, attack or {}, cfg, args)
+        if row:
+            rows.append(row)
+    if not rows:
+        raise SystemExit("No attacks were evaluated. Fill the adv image paths in the config.")
+    write_outputs(rows, Path(args.output_prefix))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

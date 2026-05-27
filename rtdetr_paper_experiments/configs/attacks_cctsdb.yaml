@@ -1,0 +1,22 @@
+dataset: cctsdb
+data: data/cctsdb.yaml
+weights: runs/detect/outputs/rtdetr_cctsdb/weights/best.pt
+max_samples: 0
+imgsz: 960
+batch: 2
+conf: 0.35
+pred_iou: 0.7
+match_iou: 0.5
+attacks:
+  TOG:
+    images: /home/sutongtong/LanTu_team1/advYOLO+AdaAD+CCTSDB/TOG/adv_images
+    labels:
+  Daedalus:
+    images: /home/sutongtong/LanTu_team1/advYOLO+AdaAD+CCTSDB/Dae/adv_images
+    labels:
+  OSFD:
+    images: /home/sutongtong/LanTu_team1/OSFD/adv_images
+    labels:
+  Ours:
+    images: rtdetr_paper_experiments/adv_outputs/ours/cctsdb/images
+    labels: rtdetr_paper_experiments/adv_outputs/ours/cctsdb/labels
