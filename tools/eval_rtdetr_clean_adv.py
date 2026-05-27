@@ -81,6 +81,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0, help="Sampling seed.")
     parser.add_argument("--source-model", default="Unknown", help="Attack/source model name.")
     parser.add_argument("--target-detector", default="RT-DETR", help="Target detector name.")
+    parser.add_argument(
+        "--skip-clean-val",
+        action="store_true",
+        help="Skip clean validation and use the supplied clean metrics for ASR/table output.",
+    )
+    parser.add_argument("--clean-map50", type=float, default=None, help="Clean mAP50 in percent.")
+    parser.add_argument("--clean-map50-95", type=float, default=None, help="Clean mAP50-95 in percent.")
+    parser.add_argument("--clean-recall", type=float, default=None, help="Clean recall in percent.")
+    parser.add_argument("--clean-f1", type=float, default=None, help="Clean F1 in percent.")
+    parser.add_argument("--clean-precision", type=float, default=None, help="Clean precision in percent.")
+    parser.add_argument(
+        "--skip-paired-asr",
+        action="store_true",
+        help="Skip paired object ASR prediction pass. Use this for paper tables that only need Recall-drop ASR.",
+    )
     return parser.parse_args()
 
 
@@ -387,7 +402,9 @@ def main() -> int:
     names = read_names(data)
     nc = int(data["nc"])
     work_dir = Path(args.project) / args.name / "matched_eval_data"
-    clean_yaml = prepare_eval_dataset(work_dir / "clean", samples, "clean_image", "clean_label", nc, names)
+    clean_yaml = None
+    if not args.skip_clean_val or not args.skip_paired_asr:
+        clean_yaml = prepare_eval_dataset(work_dir / "clean", samples, "clean_image", "clean_label", nc, names)
     adv_yaml = prepare_eval_dataset(work_dir / "adv", samples, "adv_image", "adv_label", nc, names)
 
     weights_path = resolve_weights_path(args.weights, args.project, args.name)
@@ -409,20 +426,37 @@ def main() -> int:
     print(f"Adv strip suffix: {args.adv_strip_suffix!r}")
 
     model = RTDETR(str(weights_path))
-    clean_metrics = extract_metrics(run_val(model, clean_yaml, args, "clean"))
     gt_boxes = count_gt_boxes([sample["clean_label"] for sample in samples])
-    clean_map50 = format_percent(clean_metrics["mAP50"])
-    clean_map = format_percent(clean_metrics["mAP50-95"])
-    clean_precision = format_percent(clean_metrics["precision"])
-    clean_recall = format_percent(clean_metrics["recall"])
-    clean_f1 = format_percent(
-        f1_from_precision_recall(clean_metrics["precision"], clean_metrics["recall"])
-    )
-    print(
-        f"Clean mAP50={clean_map50:.2f}, Clean mAP50-95={clean_map:.2f}, "
-        f"Clean Precision={clean_precision:.2f}, Clean Recall={clean_recall:.2f}, "
-        f"Clean F1={clean_f1:.2f}, GT boxes={gt_boxes}"
-    )
+    if args.skip_clean_val:
+        if args.clean_recall is None:
+            raise SystemExit("--skip-clean-val requires --clean-recall so ASR can be computed.")
+        clean_map50 = float(args.clean_map50 or 0.0)
+        clean_map = float(args.clean_map50_95 or 0.0)
+        clean_recall = float(args.clean_recall)
+        clean_f1 = float(args.clean_f1 or 0.0)
+        clean_precision = float(args.clean_precision or 0.0)
+        print(
+            f"Clean validation skipped. Using supplied clean metrics: "
+            f"Clean mAP50={clean_map50:.2f}, Clean mAP50-95={clean_map:.2f}, "
+            f"Clean Precision={clean_precision:.2f}, Clean Recall={clean_recall:.2f}, "
+            f"Clean F1={clean_f1:.2f}, GT boxes={gt_boxes}"
+        )
+    else:
+        if clean_yaml is None:
+            raise RuntimeError("clean_yaml was not prepared for clean validation.")
+        clean_metrics = extract_metrics(run_val(model, clean_yaml, args, "clean"))
+        clean_map50 = format_percent(clean_metrics["mAP50"])
+        clean_map = format_percent(clean_metrics["mAP50-95"])
+        clean_precision = format_percent(clean_metrics["precision"])
+        clean_recall = format_percent(clean_metrics["recall"])
+        clean_f1 = format_percent(
+            f1_from_precision_recall(clean_metrics["precision"], clean_metrics["recall"])
+        )
+        print(
+            f"Clean mAP50={clean_map50:.2f}, Clean mAP50-95={clean_map:.2f}, "
+            f"Clean Precision={clean_precision:.2f}, Clean Recall={clean_recall:.2f}, "
+            f"Clean F1={clean_f1:.2f}, GT boxes={gt_boxes}"
+        )
 
     print(f"Adv samples: {len(samples)} matched from {len(samples)} clean samples")
     adv_metrics = extract_metrics(run_val(model, adv_yaml, args, "adv"))
@@ -440,15 +474,26 @@ def main() -> int:
         f"Adv F1={adv_f1:.2f}, ASR={asr:.2f}"
     )
 
-    paired = compute_paired_object_asr(model, samples, args)
-    print(
-        "Paired object ASR="
-        f"{paired['paired_asr']:.2f} "
-        f"(adv missed {int(paired['adv_missed'])}/"
-        f"{int(paired['clean_detected'])} clean-detected GT boxes; "
-        f"total GT {int(paired['total_gt'])}; "
-        f"conf={args.conf}, match_iou={args.match_iou})"
-    )
+    paired = {
+        "paired_asr": 0.0,
+        "clean_detected": 0.0,
+        "adv_missed": 0.0,
+        "total_gt": float(gt_boxes),
+    }
+    paired_asr_text = "--"
+    if args.skip_paired_asr:
+        print("Paired object ASR skipped.")
+    else:
+        paired = compute_paired_object_asr(model, samples, args)
+        paired_asr_text = f"{paired['paired_asr']:.1f}"
+        print(
+            "Paired object ASR="
+            f"{paired['paired_asr']:.2f} "
+            f"(adv missed {int(paired['adv_missed'])}/"
+            f"{int(paired['clean_detected'])} clean-detected GT boxes; "
+            f"total GT {int(paired['total_gt'])}; "
+            f"conf={args.conf}, match_iou={args.match_iou})"
+        )
 
     table = "\n".join(
         [
@@ -459,7 +504,7 @@ def main() -> int:
                 f"| {args.source_model} | {args.target_detector} | {clean_map50:.1f} | "
                 f"{clean_map:.1f} | {clean_recall:.1f} | {clean_f1:.1f} | "
                 f"{adv_map50:.1f} | {adv_map:.1f} | {adv_recall:.1f} | {adv_f1:.1f} | "
-                f"{asr:.1f} | {paired['paired_asr']:.1f} |"
+                f"{asr:.1f} | {paired_asr_text} |"
             ),
             "",
             "| Attack | mAP50 (%) | mAP50-95 (%) | Recall (%) | F1 (%) | ASR (%) |",

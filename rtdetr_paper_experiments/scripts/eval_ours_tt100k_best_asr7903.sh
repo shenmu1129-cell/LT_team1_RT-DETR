@@ -17,6 +17,15 @@ MATCH_IOU="${MATCH_IOU:-0.5}"
 PROJECT="${PROJECT:-rtdetr_paper_experiments/results/raw_eval}"
 NAME="${NAME:-tt100k_ours_best_asr7903}"
 SKIP_GENERATE="${SKIP_GENERATE:-0}"
+SKIP_CLEAN_VAL="${SKIP_CLEAN_VAL:-1}"
+SKIP_PAIRED_ASR="${SKIP_PAIRED_ASR:-1}"
+
+# RT-DETR clean metrics on TT100K test. Override these if you change weights/data/imgsz.
+CLEAN_MAP50="${CLEAN_MAP50:-82.09}"
+CLEAN_MAP50_95="${CLEAN_MAP50_95:-62.97}"
+CLEAN_PRECISION="${CLEAN_PRECISION:-84.08}"
+CLEAN_RECALL="${CLEAN_RECALL:-80.35}"
+CLEAN_F1="${CLEAN_F1:-82.17}"
 
 if [[ ! -f "${GENERATOR}" ]]; then
   echo "Generator file does not exist: ${GENERATOR}" >&2
@@ -44,7 +53,7 @@ else
 fi
 
 echo "Evaluating RT-DETR on clean/adversarial TT100K samples..."
-CUDA_VISIBLE_DEVICES="${GPU_ID}" python tools/eval_rtdetr_clean_adv.py \
+ARGS=(
   --weights "${WEIGHTS}" \
   --data "${DATA}" \
   --adv-images "${ADV_OUTPUT}/images" \
@@ -60,3 +69,21 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" python tools/eval_rtdetr_clean_adv.py \
   --name "${NAME}" \
   --source-model "Ours-AdvGAN-AdaAD" \
   --target-detector "RT-DETR"
+)
+
+if [[ "${SKIP_CLEAN_VAL}" == "1" ]]; then
+  ARGS+=(
+    --skip-clean-val
+    --clean-map50 "${CLEAN_MAP50}"
+    --clean-map50-95 "${CLEAN_MAP50_95}"
+    --clean-precision "${CLEAN_PRECISION}"
+    --clean-recall "${CLEAN_RECALL}"
+    --clean-f1 "${CLEAN_F1}"
+  )
+fi
+
+if [[ "${SKIP_PAIRED_ASR}" == "1" ]]; then
+  ARGS+=(--skip-paired-asr)
+fi
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" python tools/eval_rtdetr_clean_adv.py "${ARGS[@]}"
