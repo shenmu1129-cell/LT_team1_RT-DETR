@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import random
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -272,6 +272,7 @@ class TrainConfig:
     eval_samples: int
     max_train_samples: int
     seed: int
+    resume_checkpoint: str
 
 
 def parse_args() -> TrainConfig:
@@ -302,6 +303,11 @@ def parse_args() -> TrainConfig:
         help="Use at most this many training images per epoch. 0 means full split.",
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--resume-checkpoint",
+        default="",
+        help="Resume full training state from checkpoint_latest.pth or checkpoint_best_asr.pth.",
+    )
     args = parser.parse_args()
     return TrainConfig(**{**vars(args), "output": Path(args.output)})
 
@@ -357,6 +363,44 @@ def evaluate_quick(
     }
 
 
+def config_to_checkpoint_dict(cfg: TrainConfig) -> Dict[str, Any]:
+    data = asdict(cfg)
+    data["output"] = str(cfg.output)
+    return data
+
+
+def torch_load_checkpoint(path: Path, device: torch.device) -> Dict[str, Any]:
+    try:
+        return torch.load(path, map_location=device, weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location=device)
+
+
+def save_training_checkpoint(
+    path: Path,
+    *,
+    epoch: int,
+    best_asr: float,
+    generator: Generator,
+    discriminator: Discriminator,
+    opt_g: torch.optim.Optimizer,
+    opt_d: torch.optim.Optimizer,
+    cfg: TrainConfig,
+) -> None:
+    torch.save(
+        {
+            "epoch": epoch,
+            "best_asr": best_asr,
+            "generator": generator.state_dict(),
+            "discriminator": discriminator.state_dict(),
+            "optimizer_g": opt_g.state_dict(),
+            "optimizer_d": opt_d.state_dict(),
+            "config": config_to_checkpoint_dict(cfg),
+        },
+        path,
+    )
+
+
 def main() -> int:
     cfg = parse_args()
     random.seed(cfg.seed)
@@ -405,9 +449,30 @@ def main() -> int:
     opt_g = torch.optim.Adam(generator.parameters(), lr=cfg.lr_g, betas=(0.5, 0.999))
     opt_d = torch.optim.Adam(discriminator.parameters(), lr=cfg.lr_d, betas=(0.5, 0.999))
 
+    best_asr = -1.0
+    start_epoch = 1
+    if cfg.resume_checkpoint:
+        resume_path = Path(cfg.resume_checkpoint).expanduser()
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint does not exist: {resume_path}")
+        checkpoint = torch_load_checkpoint(resume_path, device)
+        generator.load_state_dict(checkpoint["generator"])
+        if "discriminator" in checkpoint:
+            discriminator.load_state_dict(checkpoint["discriminator"])
+        if "optimizer_g" in checkpoint:
+            opt_g.load_state_dict(checkpoint["optimizer_g"])
+        if "optimizer_d" in checkpoint:
+            opt_d.load_state_dict(checkpoint["optimizer_d"])
+        best_asr = float(checkpoint.get("best_asr", -1.0))
+        start_epoch = int(checkpoint.get("epoch", 0)) + 1
+        print(f"Resumed checkpoint: {resume_path}")
+        print(f"Resume epoch: {start_epoch}/{cfg.epochs}, previous best_asr={best_asr:.2f}")
+        if start_epoch > cfg.epochs:
+            print("Checkpoint epoch is already >= requested --epochs. Nothing to train.")
+            return 0
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = cfg.output / f"training_log_{timestamp}.csv"
-    best_asr = -1.0
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
@@ -427,7 +492,7 @@ def main() -> int:
         )
         writer.writeheader()
 
-        for epoch in range(1, cfg.epochs + 1):
+        for epoch in range(start_epoch, cfg.epochs + 1):
             sums = {k: 0.0 for k in ["loss_d", "loss_g", "loss_det", "loss_smooth", "loss_traj", "linf"]}
             steps = 0
             for clean, _ in tqdm(loader, desc=f"Epoch {epoch}/{cfg.epochs}"):
@@ -481,15 +546,47 @@ def main() -> int:
                 f"quick_asr={row['quick_asr']:.2f}, fp/img={row['quick_fp_per_img']:.3f}"
             )
 
-            torch.save(generator.state_dict(), cfg.output / "weights" / "netG_latest.pth")
+            weights_dir = cfg.output / "weights"
+            torch.save(generator.state_dict(), weights_dir / "netG_latest.pth")
             if row["quick_asr"] > best_asr:
                 best_asr = row["quick_asr"]
-                torch.save(generator.state_dict(), cfg.output / "weights" / "netG_best_asr.pth")
+                torch.save(generator.state_dict(), weights_dir / "netG_best_asr.pth")
+                save_training_checkpoint(
+                    weights_dir / "checkpoint_best_asr.pth",
+                    epoch=epoch,
+                    best_asr=best_asr,
+                    generator=generator,
+                    discriminator=discriminator,
+                    opt_g=opt_g,
+                    opt_d=opt_d,
+                    cfg=cfg,
+                )
+            save_training_checkpoint(
+                weights_dir / "checkpoint_latest.pth",
+                epoch=epoch,
+                best_asr=best_asr,
+                generator=generator,
+                discriminator=discriminator,
+                opt_g=opt_g,
+                opt_d=opt_d,
+                cfg=cfg,
+            )
             if epoch % 10 == 0:
-                torch.save(generator.state_dict(), cfg.output / "weights" / f"netG_epoch_{epoch}.pth")
+                torch.save(generator.state_dict(), weights_dir / f"netG_epoch_{epoch}.pth")
+                save_training_checkpoint(
+                    weights_dir / f"checkpoint_epoch_{epoch}.pth",
+                    epoch=epoch,
+                    best_asr=best_asr,
+                    generator=generator,
+                    discriminator=discriminator,
+                    opt_g=opt_g,
+                    opt_d=opt_d,
+                    cfg=cfg,
+                )
 
     print(f"Training log: {csv_path}")
     print(f"Best generator: {cfg.output / 'weights' / 'netG_best_asr.pth'}")
+    print(f"Latest checkpoint: {cfg.output / 'weights' / 'checkpoint_latest.pth'}")
     return 0
 
 

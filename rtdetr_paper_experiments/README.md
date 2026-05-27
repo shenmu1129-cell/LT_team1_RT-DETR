@@ -74,6 +74,44 @@ rtdetr_paper_experiments/runs/ours_rtdetr_cctsdb
 rtdetr_paper_experiments/runs/ours_rtdetr_tt100k
 ```
 
+训练过程中会保存两类权重：
+
+```bash
+weights/netG_latest.pth          # 最新生成器，用于生成对抗样本
+weights/netG_best_asr.pth        # quick_asr 最高的生成器，用于生成对抗样本
+weights/checkpoint_latest.pth    # 完整恢复点，包含生成器、判别器、优化器、epoch、best_asr
+weights/checkpoint_best_asr.pth  # quick_asr 最高时的完整恢复点
+```
+
+如果训练中途断了，可以从完整 checkpoint 继续。注意 `EPOCHS` 表示最终要训练到的总 epoch 数，不是额外再训练多少轮：
+
+```bash
+GPU_ID=3 \
+EPOCHS=30 \
+BATCH=32 \
+IMGSZ=640 \
+WORKERS=8 \
+MAX_TRAIN_SAMPLES=2000 \
+RESUME_CHECKPOINT=rtdetr_paper_experiments/runs/ours_rtdetr_cctsdb/weights/checkpoint_latest.pth \
+bash rtdetr_paper_experiments/scripts/train_ours_rtdetr_cctsdb_bg.sh
+```
+
+如果要调强攻击，可以直接覆盖训练参数，例如：
+
+```bash
+GPU_ID=3 \
+EPOCHS=30 \
+BATCH=32 \
+IMGSZ=640 \
+WORKERS=8 \
+MAX_TRAIN_SAMPLES=3000 \
+LR_G=1e-4 \
+LR_D=5e-5 \
+ALPHA_DET=20 \
+ADAAD_STEPS=8 \
+bash rtdetr_paper_experiments/scripts/train_ours_rtdetr_cctsdb_bg.sh
+```
+
 ## 2. 生成 Ours 对抗样本
 
 CCTSDB：
