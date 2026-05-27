@@ -268,6 +268,11 @@ def format_percent(value: float) -> float:
     return value * 100.0
 
 
+def f1_from_precision_recall(precision: float, recall: float) -> float:
+    denom = precision + recall
+    return 2.0 * precision * recall / denom if denom > 0 else 0.0
+
+
 def collect_predictions(model, image_dir: Path, args: argparse.Namespace) -> Dict[str, List[Dict[str, Any]]]:
     predictions: Dict[str, List[Dict[str, Any]]] = {}
     results = model.predict(
@@ -406,15 +411,33 @@ def main() -> int:
     clean_metrics = extract_metrics(run_val(model, clean_yaml, args, "clean"))
     gt_boxes = count_gt_boxes([sample["clean_label"] for sample in samples])
     clean_map50 = format_percent(clean_metrics["mAP50"])
+    clean_map = format_percent(clean_metrics["mAP50-95"])
+    clean_precision = format_percent(clean_metrics["precision"])
     clean_recall = format_percent(clean_metrics["recall"])
-    print(f"Clean mAP50={clean_map50:.2f}, Clean Recall={clean_recall:.2f}, GT boxes={gt_boxes}")
+    clean_f1 = format_percent(
+        f1_from_precision_recall(clean_metrics["precision"], clean_metrics["recall"])
+    )
+    print(
+        f"Clean mAP50={clean_map50:.2f}, Clean mAP50-95={clean_map:.2f}, "
+        f"Clean Precision={clean_precision:.2f}, Clean Recall={clean_recall:.2f}, "
+        f"Clean F1={clean_f1:.2f}, GT boxes={gt_boxes}"
+    )
 
     print(f"Adv samples: {len(samples)} matched from {len(samples)} clean samples")
     adv_metrics = extract_metrics(run_val(model, adv_yaml, args, "adv"))
     adv_map50 = format_percent(adv_metrics["mAP50"])
+    adv_map = format_percent(adv_metrics["mAP50-95"])
+    adv_precision = format_percent(adv_metrics["precision"])
     adv_recall = format_percent(adv_metrics["recall"])
+    adv_f1 = format_percent(
+        f1_from_precision_recall(adv_metrics["precision"], adv_metrics["recall"])
+    )
     asr = ((clean_recall - adv_recall) / clean_recall * 100.0) if clean_recall > 0 else 0.0
-    print(f"Adv mAP50={adv_map50:.2f}, Adv Recall={adv_recall:.2f}, ASR={asr:.2f}")
+    print(
+        f"Adv mAP50={adv_map50:.2f}, Adv mAP50-95={adv_map:.2f}, "
+        f"Adv Precision={adv_precision:.2f}, Adv Recall={adv_recall:.2f}, "
+        f"Adv F1={adv_f1:.2f}, ASR={asr:.2f}"
+    )
 
     paired = compute_paired_object_asr(model, samples, args)
     print(
@@ -429,12 +452,20 @@ def main() -> int:
     table = "\n".join(
         [
             "",
-            "| Source Model | Target Detector | Clean mAP50 | Adv mAP50 | Clean Recall | Adv Recall | Recall-drop ASR | Paired Object ASR |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Source Model | Target Detector | Clean mAP50 | Clean mAP50-95 | Clean Recall | Clean F1 | Adv mAP50 | Adv mAP50-95 | Adv Recall | Adv F1 | Recall-drop ASR | Paired Object ASR |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             (
                 f"| {args.source_model} | {args.target_detector} | {clean_map50:.1f} | "
-                f"{adv_map50:.1f} | {clean_recall:.1f} | {adv_recall:.1f} | "
+                f"{clean_map:.1f} | {clean_recall:.1f} | {clean_f1:.1f} | "
+                f"{adv_map50:.1f} | {adv_map:.1f} | {adv_recall:.1f} | {adv_f1:.1f} | "
                 f"{asr:.1f} | {paired['paired_asr']:.1f} |"
+            ),
+            "",
+            "| Attack | mAP50 (%) | mAP50-95 (%) | Recall (%) | F1 (%) | ASR (%) |",
+            "| --- | --- | --- | --- | --- | --- |",
+            (
+                f"| {args.source_model} | {adv_map50:.1f} | {adv_map:.1f} | "
+                f"{adv_recall:.1f} | {adv_f1:.1f} | {asr:.1f} |"
             ),
         ]
     )

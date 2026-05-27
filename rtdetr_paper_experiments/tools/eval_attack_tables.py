@@ -84,8 +84,16 @@ def run_one_attack(name: str, attack: Dict[str, Any], cfg: Dict[str, Any], args:
         return None
 
     text = proc.stdout
-    clean = re.search(r"Clean mAP50=([0-9.]+), Clean Recall=([0-9.]+)", text)
-    adv = re.search(r"Adv mAP50=([0-9.]+), Adv Recall=([0-9.]+), ASR=([0-9.]+)", text)
+    clean = re.search(
+        r"Clean mAP50=([0-9.]+), Clean mAP50-95=([0-9.]+), "
+        r"Clean Precision=([0-9.]+), Clean Recall=([0-9.]+), Clean F1=([0-9.]+)",
+        text,
+    )
+    adv = re.search(
+        r"Adv mAP50=([0-9.]+), Adv mAP50-95=([0-9.]+), "
+        r"Adv Precision=([0-9.]+), Adv Recall=([0-9.]+), Adv F1=([0-9.]+), ASR=([0-9.]+)",
+        text,
+    )
     paired = re.search(r"Paired object ASR=([0-9.]+)", text)
     if not clean or not adv:
         print(f"[FAIL] {name}: could not parse metrics")
@@ -94,10 +102,16 @@ def run_one_attack(name: str, attack: Dict[str, Any], cfg: Dict[str, Any], args:
         "attack": name,
         "target_detector": args.target_detector,
         "clean_map50": float(clean.group(1)),
+        "clean_map50_95": float(clean.group(2)),
+        "clean_precision": float(clean.group(3)),
+        "clean_recall": float(clean.group(4)),
+        "clean_f1": float(clean.group(5)),
         "adv_map50": float(adv.group(1)),
-        "clean_recall": float(clean.group(2)),
-        "adv_recall": float(adv.group(2)),
-        "recall_drop_asr": float(adv.group(3)),
+        "adv_map50_95": float(adv.group(2)),
+        "adv_precision": float(adv.group(3)),
+        "adv_recall": float(adv.group(4)),
+        "adv_f1": float(adv.group(5)),
+        "recall_drop_asr": float(adv.group(6)),
         "paired_object_asr": float(paired.group(1)) if paired else 0.0,
     }
 
@@ -110,9 +124,15 @@ def write_outputs(rows: List[Dict[str, Any]], output_prefix: Path) -> None:
         "attack",
         "target_detector",
         "clean_map50",
+        "clean_map50_95",
+        "clean_precision",
         "adv_map50",
+        "adv_map50_95",
+        "adv_precision",
         "clean_recall",
         "adv_recall",
+        "clean_f1",
+        "adv_f1",
         "recall_drop_asr",
         "paired_object_asr",
     ]
@@ -122,13 +142,13 @@ def write_outputs(rows: List[Dict[str, Any]], output_prefix: Path) -> None:
         writer.writerows(rows)
 
     lines = [
-        "| Attack | Target Detector | Clean mAP50 | Adv mAP50 | Clean Recall | Adv Recall | Recall-drop ASR | Paired Object ASR |",
+        "| Attack | Target Detector | mAP50 (%) | mAP50-95 (%) | Recall (%) | F1 (%) | ASR (%) | Paired Object ASR (%) |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         lines.append(
-            f"| {row['attack']} | {row['target_detector']} | {row['clean_map50']:.1f} | "
-            f"{row['adv_map50']:.1f} | {row['clean_recall']:.1f} | {row['adv_recall']:.1f} | "
+            f"| {row['attack']} | {row['target_detector']} | {row['adv_map50']:.1f} | "
+            f"{row['adv_map50_95']:.1f} | {row['adv_recall']:.1f} | {row['adv_f1']:.1f} | "
             f"{row['recall_drop_asr']:.1f} | {row['paired_object_asr']:.1f} |"
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
