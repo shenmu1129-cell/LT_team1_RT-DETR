@@ -203,6 +203,7 @@ def has_matching_detection(
 
 def symlink_or_copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
+    src = src.resolve()
     try:
         os.symlink(src, dst)
     except OSError:
