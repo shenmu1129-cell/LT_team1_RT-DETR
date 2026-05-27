@@ -1,0 +1,27 @@
+dataset: tt100k_whitebox
+data: data/tt100k.yaml
+weights: runs/detect/outputs/rtdetr_tt100k/weights/best.pt
+max_samples: 0
+imgsz: 640
+batch: 16
+conf: 0.25
+pred_iou: 0.5
+match_iou: 0.5
+skip_clean_val: true
+skip_paired_asr: true
+clean_metrics:
+  map50: 82.09
+  map50_95: 62.97
+  precision: 84.08
+  recall: 80.35
+  f1: 82.17
+attacks:
+  TOG:
+    images: rtdetr_paper_experiments/adv_outputs/tog/tt100k_whitebox/images
+    labels: rtdetr_paper_experiments/adv_outputs/tog/tt100k_whitebox/labels
+  Daedalus:
+    images: rtdetr_paper_experiments/adv_outputs/daedalus/tt100k_whitebox/images
+    labels: rtdetr_paper_experiments/adv_outputs/daedalus/tt100k_whitebox/labels
+  OSFD:
+    images: rtdetr_paper_experiments/adv_outputs/osfd/tt100k_whitebox/images
+    labels: rtdetr_paper_experiments/adv_outputs/osfd/tt100k_whitebox/labels
