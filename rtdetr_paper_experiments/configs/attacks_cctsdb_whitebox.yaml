@@ -1,0 +1,27 @@
+dataset: cctsdb_whitebox
+data: data/cctsdb.yaml
+weights: runs/detect/outputs/rtdetr_cctsdb/weights/best.pt
+max_samples: 0
+imgsz: 960
+batch: 4
+conf: 0.35
+pred_iou: 0.7
+match_iou: 0.5
+skip_clean_val: true
+skip_paired_asr: true
+clean_metrics:
+  map50: 82.1
+  map50_95: 63.0
+  precision: 84.1
+  recall: 80.4
+  f1: 82.2
+attacks:
+  TOG:
+    images: rtdetr_paper_experiments/adv_outputs/tog/cctsdb_whitebox/images
+    labels: rtdetr_paper_experiments/adv_outputs/tog/cctsdb_whitebox/labels
+  Daedalus:
+    images: rtdetr_paper_experiments/adv_outputs/daedalus/cctsdb_whitebox/images
+    labels: rtdetr_paper_experiments/adv_outputs/daedalus/cctsdb_whitebox/labels
+  OSFD:
+    images: rtdetr_paper_experiments/adv_outputs/osfd/cctsdb_whitebox/images
+    labels: rtdetr_paper_experiments/adv_outputs/osfd/cctsdb_whitebox/labels
